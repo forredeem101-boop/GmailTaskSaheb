@@ -7,7 +7,7 @@ import time
 # --- CONFIGURATION ---
 TOKEN = '8717817143:AAEX0lmLy4cP_PatRngZTPhId0Mcozm57eg'
 ADMIN_ID = 2087667228  
-ADMIN_USERNAME = '@Raka_01 / @Verified_Bandaa' 
+ADMIN_USERNAME = '@SAHEB_AGeNT' 
 
 # Conversion Rate: 1 USDT = ₹94
 USDT_TO_INR_RATE = 94.0  
@@ -141,7 +141,7 @@ def handle_all_messages(message):
                    "💰 *Reward:* ₹15\n\n"
                    "⚠️ *Instructions & Rules:*\n"
                    "Rule - Create a new Gmail account.\n"
-                   "Password must be - `Raka@123`\n\n"
+                   "Password must be - `Saheb@123`\n\n"
                    "👉 *Complete the task and click the button below!*")
             markup = InlineKeyboardMarkup()
             markup.add(InlineKeyboardButton("✅ Click Here When Done", callback_data="task_done"))
