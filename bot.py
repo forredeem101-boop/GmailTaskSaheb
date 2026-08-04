@@ -32,6 +32,9 @@ def run_query(query, params=(), fetch=None, commit=False):
             return cursor.fetchall()
         elif fetch == 'id':
             return cursor.fetchone()[0]
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
     finally:
         cursor.close()
         conn.close()
@@ -313,7 +316,6 @@ def handle_all_messages(message):
         elif user_id in user_states:
             state_data = user_states[user_id]
             
-            # Add Admin State
             if state_data['state'] == 'admin_add_id' and user_id == OWNER_ID:
                 try:
                     new_admin_id = int(text.strip())
@@ -324,7 +326,6 @@ def handle_all_messages(message):
                     bot.send_message(user_id, "❌ Kripya valid numeric User ID dalein.")
                 return
 
-            # Remove Admin State
             elif state_data['state'] == 'admin_remove_id' and user_id == OWNER_ID:
                 try:
                     rem_admin_id = int(text.strip())
@@ -338,7 +339,6 @@ def handle_all_messages(message):
                     bot.send_message(user_id, "❌ Kripya valid numeric User ID dalein.")
                 return
 
-            # Gmail Task Name Received -> Now ask for Screenshot
             elif state_data['state'] == 'gmail_task_name':
                 gmail_name = text.strip()
                 user_states[user_id] = {'state': 'gmail_task_screenshot', 'gmail_name': gmail_name}
@@ -544,7 +544,7 @@ def callback_query(call):
         user_states[user_id] = {'state': 'admin_add_id'}
         bot.send_message(user_id, "📝 Jisko Admin banana hai, uska numeric **Telegram User ID** bhejein:")
 
-    elif data == "remove_admin":// remove admin
+    elif data == "remove_admin" and user_id == OWNER_ID:
         user_states[user_id] = {'state': 'admin_remove_id'}
         bot.send_message(user_id, "📝 Jiska Admin access hatana hai, uska numeric **Telegram User ID** bhejein:")
 
