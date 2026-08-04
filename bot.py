@@ -6,10 +6,10 @@ import time
 
 # --- CONFIGURATION ---
 TOKEN = '8717817143:AAEyVo1Brv7b9T-b8NE98E6iQflpR2HtWPI'
-ADMIN_ID = 8894779077  # Main Super Admin ID
+OWNER_ID = 8894779077  # Main Super Admin ID
 ADMIN_USERNAME = 'Raka_01'  
 
-# 👉 Tumhara Neon.tech PostgreSQL Database URL 👈
+# 👉 Tumhara Naya Neon.tech PostgreSQL Database URL 👈
 DATABASE_URL = 'postgresql://neondb_owner:npg_vseV2Cxlwqi9@ep-mute-frost-axanqffq-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require' 
 
 # Conversion Rate: 1 USDT = ₹94
@@ -735,5 +735,5 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "⚠️ Already processed or invalid request!", show_alert=True)
 
 # --- START BOT ---
-print("Bot with Fixed Flow for Gmail Task is running safely...")
+print("Bot running with new Token, DB and Fixed Flow...")
 bot.polling(none_stop=True)
