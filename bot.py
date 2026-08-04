@@ -5,7 +5,7 @@ import datetime
 import time
 
 # --- CONFIGURATION ---
-TOKEN = '8683212510:AAEdE8kq5-5GuKerfPa_Mzaxovgb-J5VU4w'
+TOKEN = '8717817143:AAEX0lmLy4cP_PatRngZTPhId0Mcozm57eg'
 OWNER_ID = 8894779077  # Main Super Admin ID
 ADMIN_USERNAME = 'Raka_01'  
 
