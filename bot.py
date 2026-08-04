@@ -5,7 +5,7 @@ import datetime
 import time
 
 # --- CONFIGURATION ---
-TOKEN = '8717817143:AAEyVo1Brv7b9T-b8NE98E6iQflpR2HtWPI'
+TOKEN = '8717817143:AAEX0lmLy4cP_PatRngZTPhId0Mcozm57eg'
 OWNER_ID = 8894779077  # Main Super Admin ID
 ADMIN_USERNAME = 'Raka_01'  
 
@@ -201,16 +201,24 @@ def handle_all_messages(message):
 
     # 3. NORMAL TEXT MENU & STATES HANDLER
     if message.content_type == 'text':
+        
+        # 👉 STEP 1: SHOW RULES AND DONE BUTTON
         if text == "📧 Gmail Task":
             if get_setting('gmail_task') == 'OFF' and not is_admin(user_id):
                 bot.send_message(user_id, "❌ Yeh option filhal Admin dwara **OFF** kar diya gaya hai. Kripya baad mein try karein.")
                 return
+            
+            current_pass = get_setting('gmail_password')
+            msg = (f"📧 *GMAIL TASK*\n"
+                   f"💰 *Reward:* ₹15\n\n"
+                   f"⚠️ *Instructions & Rules:*\n"
+                   f"Rule - Create a new Gmail account.\n"
+                   f"Password must be - `{current_pass}`\n\n"
+                   f"👉 *Complete the task and click the button below!*")
             markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("✅ Click Here When Done", callback_data="task_done"))
             markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-            msg = ("📧 *GMAIL TASK*\n\n"
-                   "👉 Kripya apna **Gmail Account Name / Email** yahan pehle type karke bhejein:")
             bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup)
-            user_states[user_id] = {'state': 'gmail_task_name'}
 
         elif text == "📧 Old Gmail Task":
             if get_setting('old_gmail_task') == 'OFF' and not is_admin(user_id):
@@ -340,21 +348,14 @@ def handle_all_messages(message):
                     bot.send_message(user_id, "❌ Kripya valid numeric User ID dalein.")
                 return
 
+            # 👉 STEP 3: USER SUBMITS GMAIL NAME -> ASK FOR SCREENSHOT
             elif state_data['state'] == 'gmail_task_name':
                 gmail_name = text.strip()
                 user_states[user_id] = {'state': 'gmail_task_screenshot', 'gmail_name': gmail_name}
                 
-                current_pass = get_setting('gmail_password')
-                msg = (f"📧 *GMAIL TASK*\n"
-                       f"💰 *Reward:* ₹15\n\n"
-                       f"⚠️ *Instructions & Rules:*\n"
-                       f"Rule - Create a new Gmail account.\n"
-                       f"Password must be - `{current_pass}`\n\n"
-                       f"📸 *Gmail Name saved:* `{gmail_name}`\n"
-                       f"👉 Ab task complete karne ke baad **Screenshot (Photo)** bhejein:")
                 markup = InlineKeyboardMarkup()
                 markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-                bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup)
+                bot.send_message(user_id, f"📸 *Gmail Name saved:* `{gmail_name}`\n\n👉 Ab task complete karne ke baad **Screenshot (Photo)** bhejein:", parse_mode="Markdown", reply_markup=markup)
                 return
 
             elif state_data['state'] == 'admin_set_gmail_pass' and is_admin(user_id):
@@ -520,6 +521,16 @@ def callback_query(call):
         except:
             pass
         bot.send_message(user_id, "🏠 *Main Menu*", parse_mode="Markdown", reply_markup=main_menu(user_id))
+
+    # 👉 STEP 2: USER CLICKS "DONE" -> ASK FOR GMAIL NAME
+    elif data == "task_done":
+        if get_setting('gmail_task') == 'OFF' and not is_admin(user_id):
+            bot.answer_callback_query(call.id, "Gmail Task is currently OFF!", show_alert=True)
+            return
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
+        bot.send_message(user_id, "📧 Kripya apna **Gmail Account Name / Email** yahan type karke bhejein:", parse_mode="Markdown", reply_markup=markup)
+        user_states[user_id] = {'state': 'gmail_task_name'}
 
     elif data == "admin_total_users" and is_admin(user_id):
         users = run_query("SELECT user_id FROM users", fetch='all')
@@ -724,5 +735,5 @@ def callback_query(call):
             bot.answer_callback_query(call.id, "⚠️ Already processed or invalid request!", show_alert=True)
 
 # --- START BOT ---
-print("Bot with Multi-Admin System, Bug Fixes & Gmail Name Verification is running safely...")
+print("Bot with Fixed Flow for Gmail Task is running safely...")
 bot.polling(none_stop=True)
