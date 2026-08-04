@@ -10,7 +10,7 @@ OWNER_ID = 8894779077  # Main Super Admin ID
 ADMIN_USERNAME = 'Raka_01'  
 
 # 👉 Tumhara Neon.tech PostgreSQL Database URL 👈
-DATABASE_URL = 'postgresql://neondb_owner:npg_TFXNmVEARt72@ep-twilight-sunset-axd07o2j-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require' 
+DATABASE_URL = 'postgresql://neondb_owner:npg_vseV2Cxlwqi9@ep-mute-frost-axanqffq-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require' 
 
 # Conversion Rate: 1 USDT = ₹94
 USDT_TO_INR_RATE = 94.0  
