@@ -6,8 +6,8 @@ import time
 
 # --- CONFIGURATION ---
 TOKEN = '8717817143:AAEyVo1Brv7b9T-b8NE98E6iQflpR2HtWPI'
-OWNER_ID = 8894779077  # Main Super Admin ID
-ADMIN_USERNAME = 'Raka_01'  
+OWNER_ID = 2087667228  # Main Super Admin ID
+ADMIN_USERNAME = '@SAHEB_AGeNT'  
 
 # 👉 Tumhara Naya Neon.tech PostgreSQL Database URL 👈
 DATABASE_URL = 'postgresql://neondb_owner:npg_vseV2Cxlwqi9@ep-mute-frost-axanqffq-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require' 
