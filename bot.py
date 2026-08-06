@@ -6,8 +6,8 @@ import time
 import os
 
 # --- CONFIGURATION ---
-TOKEN = '8717817143:AAEX0lmLy4cP_PatRngZTPhId0Mcozm57eg'
-OWNER_ID = 8894779077  # Main Super Admin ID
+TOKEN = '8717817143:AAEyVo1Brv7b9T-b8NE98E6iQflpR2HtWPI'
+OWNER_ID = 2087667228  # Main Super Admin ID
 ADMIN_USERNAME = 'Raka_01'  
 
 # 👉 Tumhara Neon.tech PostgreSQL Database URL 👈
