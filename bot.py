@@ -3,13 +3,14 @@ from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMar
 import psycopg2
 import datetime
 import time
+import os
 
 # --- CONFIGURATION ---
-TOKEN = '8717817143:AAEyVo1Brv7b9T-b8NE98E6iQflpR2HtWPI'
-OWNER_ID = 2087667228  # Main Super Admin ID
-ADMIN_USERNAME = '@SAHEB_AGeNT'  
+TOKEN = '8717817143:AAEX0lmLy4cP_PatRngZTPhId0Mcozm57eg'
+OWNER_ID = 8894779077  # Main Super Admin ID
+ADMIN_USERNAME = 'Raka_01'  
 
-# 👉 Tumhara Naya Neon.tech PostgreSQL Database URL 👈
+# 👉 Tumhara Neon.tech PostgreSQL Database URL 👈
 DATABASE_URL = 'postgresql://neondb_owner:npg_vseV2Cxlwqi9@ep-mute-frost-axanqffq-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require' 
 
 # Conversion Rate: 1 USDT = ₹94
@@ -33,7 +34,6 @@ def run_query(query, params=(), fetch=None, commit=False):
         elif fetch == 'id':
             return cursor.fetchone()[0]
     except Exception as e:
-        print(f"Database Error: {e}")
         return None
     finally:
         cursor.close()
@@ -41,30 +41,31 @@ def run_query(query, params=(), fetch=None, commit=False):
 
 # --- DATABASE SETUP (POSTGRESQL) ---
 def init_db():
-    run_query('''CREATE TABLE IF NOT EXISTS users
-                 (user_id BIGINT PRIMARY KEY, balance FLOAT DEFAULT 0)''', commit=True)
-    run_query('''CREATE TABLE IF NOT EXISTS history
-                 (id SERIAL PRIMARY KEY, user_id BIGINT, type TEXT, amount FLOAT, detail TEXT, date TEXT)''', commit=True)
-    run_query('''CREATE TABLE IF NOT EXISTS pending_withdraws
-                 (id SERIAL PRIMARY KEY, user_id BIGINT, method TEXT, address TEXT, amount FLOAT)''', commit=True)
-    run_query('''CREATE TABLE IF NOT EXISTS approved_withdraws
-                 (id SERIAL PRIMARY KEY, user_id BIGINT, method TEXT, address TEXT, amount FLOAT, date TEXT)''', commit=True)
-    run_query('''CREATE TABLE IF NOT EXISTS admins
-                 (user_id BIGINT PRIMARY KEY)''', commit=True)
-    run_query('''CREATE TABLE IF NOT EXISTS settings
-                 (key TEXT PRIMARY KEY, value TEXT)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, balance FLOAT DEFAULT 0)''', commit=True)
+    run_query('''ALTER TABLE users ADD COLUMN username TEXT DEFAULT 'Unknown' ''', commit=True)
     
-    # Ensure Main Owner is always in admins table
+    run_query('''CREATE TABLE IF NOT EXISTS history (id SERIAL PRIMARY KEY, user_id BIGINT, type TEXT, amount FLOAT, detail TEXT, date TEXT)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS pending_withdraws (id SERIAL PRIMARY KEY, user_id BIGINT, method TEXT, address TEXT, amount FLOAT)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS approved_withdraws (id SERIAL PRIMARY KEY, user_id BIGINT, method TEXT, address TEXT, amount FLOAT, date TEXT)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS admins (user_id BIGINT PRIMARY KEY)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS map_tasks (id SERIAL PRIMARY KEY, link TEXT, review_text TEXT, status TEXT DEFAULT 'AVAILABLE', assigned_to BIGINT)''', commit=True)
+    run_query('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''', commit=True)
+    
     run_query("INSERT INTO admins (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (OWNER_ID,), commit=True)
 
     default_settings = {
         'bot_status': 'ON',
         'gmail_task': 'ON',
         'old_gmail_task': 'ON',
+        'map_review_task': 'ON',
         'withdraw': 'ON',
         'min_upi': '15.0',
         'min_usdt': '0.16',
-        'gmail_password': 'ethicbro999'
+        'gmail_password': 'ethicbro999',
+        'reward_gmail': '15.0',
+        'reward_oldgmail': '15.0',
+        'reward_map': '10.0',
+        'map_rules': '1. Open the provided link.\n2. Submit a 5-Star rating.\n3. Copy the exact text below and post it.\n4. Take a clear screenshot and submit it here.'
     }
     for k, v in default_settings.items():
         run_query("INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING", (k, v), commit=True)
@@ -73,50 +74,58 @@ init_db()
 
 # --- HELPER FUNCTIONS ---
 def is_admin(user_id):
-    if user_id == OWNER_ID:
-        return True
+    if user_id == OWNER_ID: return True
     res = run_query("SELECT user_id FROM admins WHERE user_id=%s", (user_id,), fetch='one')
     return res is not None
 
 def get_setting(key):
     res = run_query("SELECT value FROM settings WHERE key=%s", (key,), fetch='one')
-    return res[0] if res else 'ON'
+    return res[0] if res else '0'
 
 def update_setting(key, value):
     run_query("UPDATE settings SET value=%s WHERE key=%s", (str(value), key), commit=True)
 
 def get_balance(user_id):
     res = run_query("SELECT balance FROM users WHERE user_id=%s", (user_id,), fetch='one')
-    if res:
-        return res[0]
-    else:
-        run_query("INSERT INTO users (user_id, balance) VALUES (%s, %s)", (user_id, 0), commit=True)
-        return 0
+    if res: return res[0]
+    run_query("INSERT INTO users (user_id, balance) VALUES (%s, %s)", (user_id, 0), commit=True)
+    return 0
 
 def add_balance(user_id, amount, detail):
     current = get_balance(user_id)
-    new_balance = current + amount
-    run_query("UPDATE users SET balance=%s WHERE user_id=%s", (new_balance, user_id), commit=True)
+    run_query("UPDATE users SET balance=%s WHERE user_id=%s", (current + amount, user_id), commit=True)
     date_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    run_query("INSERT INTO history (user_id, type, amount, detail, date) VALUES (%s, %s, %s, %s, %s)", 
-              (user_id, "CREDIT", amount, detail, date_now), commit=True)
+    run_query("INSERT INTO history (user_id, type, amount, detail, date) VALUES (%s, %s, %s, %s, %s)", (user_id, "CREDIT", amount, detail, date_now), commit=True)
 
 def deduct_balance(user_id, amount, detail):
     current = get_balance(user_id)
-    new_balance = current - amount
-    run_query("UPDATE users SET balance=%s WHERE user_id=%s", (new_balance, user_id), commit=True)
+    run_query("UPDATE users SET balance=%s WHERE user_id=%s", (current - amount, user_id), commit=True)
     date_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    run_query("INSERT INTO history (user_id, type, amount, detail, date) VALUES (%s, %s, %s, %s, %s)", 
-              (user_id, "DEBIT", amount, detail, date_now), commit=True)
+    run_query("INSERT INTO history (user_id, type, amount, detail, date) VALUES (%s, %s, %s, %s, %s)", (user_id, "DEBIT", amount, detail, date_now), commit=True)
 
 def get_all_users():
     records = run_query("SELECT user_id FROM users", fetch='all')
     return [row[0] for row in records] if records else []
 
+def admin_markup(user_id):
+    markup = InlineKeyboardMarkup()
+    stat = get_setting('bot_status')
+    markup.row(InlineKeyboardButton(f"🤖 Bot Status: {stat}", callback_data="admin_bot_toggle"), InlineKeyboardButton("🟢/🔴 Options", callback_data="admin_toggles"))
+    markup.row(InlineKeyboardButton("💰 Set Task Rewards", callback_data="admin_reward_menu"), InlineKeyboardButton("🗺️ Manage Map Tasks", callback_data="admin_map_menu"))
+    if user_id == OWNER_ID: markup.row(InlineKeyboardButton("👥 Manage Admins", callback_data="admin_manage"))
+    
+    markup.row(InlineKeyboardButton("📊 Total Users", callback_data="admin_total_users"), InlineKeyboardButton("👥 All User Balances", callback_data="admin_user_balances"))
+    
+    markup.row(InlineKeyboardButton("⚙️ Set Min Withdraw", callback_data="admin_set_min"), InlineKeyboardButton("🔑 Gmail Pass", callback_data="admin_set_pass"))
+    markup.row(InlineKeyboardButton("📜 Approved Withdrawals", callback_data="admin_approved_list"))
+    markup.row(InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("💸 Add Balance", callback_data="admin_addbal"))
+    return markup
+
 # --- MAIN MENU ---
 def main_menu(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row(KeyboardButton("📧 Gmail Task"), KeyboardButton("📧 Old Gmail Task"))
+    markup.row(KeyboardButton("🗺️ Map Review Task"))
     markup.row(KeyboardButton("💰 Wallet"), KeyboardButton("💸 Withdraw"))
     markup.row(KeyboardButton("📞 Contact & Help"))
     if is_admin(user_id):
@@ -126,386 +135,346 @@ def main_menu(user_id):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.chat.id
+    username = message.from_user.username
+    uname_str = f"@{username}" if username else str(message.from_user.first_name)
     
     if get_setting('bot_status') == 'OFF' and not is_admin(user_id):
-        bot.send_message(user_id, "🛠️ <b>Bot is under Maintenance!</b>\nKripya thodi der baad try karein.", parse_mode="HTML")
+        bot.send_message(user_id, "🛠️ <b>System Under Maintenance</b>\nWe are currently upgrading our systems. Please check back later.", parse_mode="HTML")
         return
-
     res = run_query("SELECT user_id FROM users WHERE user_id=%s", (user_id,), fetch='one')
-    is_new = res is None
     get_balance(user_id) 
     
-    if is_new and not is_admin(user_id):
-        try:
-            bot.send_message(OWNER_ID, f"🚀 <b>New User Started Bot!</b>\n\n👤 <b>User ID:</b> <code>{user_id}</code>\n👤 <b>Name:</b> {message.from_user.first_name}", parse_mode="HTML")
-        except:
-            pass
+    run_query("UPDATE users SET username=%s WHERE user_id=%s", (uname_str, user_id), commit=True)
+    
+    if res is None and not is_admin(user_id):
+        try: bot.send_message(OWNER_ID, f"🚀 <b>New User Registration</b>\n\n👤 <b>User ID:</b> <code>{user_id}</code>\n👤 <b>Name:</b> {message.from_user.first_name}\n🔗 <b>Username:</b> {uname_str}", parse_mode="HTML")
+        except: pass
 
-    msg = (f"✨ <b>WELCOME TO OUR BOT!</b> ✨\n\n"
-           f"Hello {message.from_user.first_name}, yahan aap simple tasks complete karke real cash earn kar sakte hain! 💸\n\n"
-           f"👇 <b>Niche diye gaye buttons se apna task shuru karein:</b>")
+    msg = (f"✨ <b>𝗪𝗘𝗟𝗖𝗢𝗠𝗘 𝗧𝗢 𝗣𝗥𝗘𝗠𝗜𝗨𝗠 𝗘𝗔𝗥𝗡𝗜𝗡𝗚𝗦</b> ✨\n\n"
+           f"Greetings <b>{message.from_user.first_name}</b>, we are delighted to have you here! 💼\n\n"
+           f"Complete verified micro-tasks and earn real cash instantly directly to your account.\n\n"
+           f"🔰 <b>Please select an option below to begin:</b>")
     bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=main_menu(user_id))
 
-# --- MAIN TEXT & BROADCAST HANDLER ---
+# --- MAIN TEXT HANDLER ---
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document'])
 def handle_all_messages(message):
     user_id = message.chat.id
     text = message.text if message.text else message.caption
 
+    username = message.from_user.username
+    uname_str = f"@{username}" if username else str(message.from_user.first_name)
+    run_query("UPDATE users SET username=%s WHERE user_id=%s", (uname_str, user_id), commit=True)
+
     if get_setting('bot_status') == 'OFF' and not is_admin(user_id):
-        bot.send_message(user_id, "🛠️ <b>Bot is currently OFF for Maintenance!</b>", parse_mode="HTML")
+        bot.send_message(user_id, "🛠️ <b>System is currently under maintenance!</b>", parse_mode="HTML")
         return
 
-    # 1. ADMIN BROADCAST CHECK
+    # ADMIN BROADCAST
     if user_id in user_states and user_states[user_id].get('state') == 'admin_wait_broadcast' and is_admin(user_id):
         del user_states[user_id] 
-        bot.send_message(user_id, "⏳ <b>Broadcast Started...</b> Please wait.", parse_mode="HTML")
-        
-        users = get_all_users()
-        success = 0
-        failed = 0
-        
-        for u_id in users:
+        bot.send_message(user_id, "⏳ <b>Initiating Broadcast...</b> Please wait.", parse_mode="HTML")
+        success, failed = 0, 0
+        for u_id in get_all_users():
             try:
                 bot.copy_message(chat_id=u_id, from_chat_id=user_id, message_id=message.message_id)
                 success += 1
                 time.sleep(0.04) 
-            except Exception:
-                failed += 1
-                
-        bot.send_message(user_id, f"✅ <b>Broadcast Complete!</b>\n\n🚀 Sent: {success}\n❌ Failed (Blocked): {failed}", parse_mode="HTML", reply_markup=main_menu(user_id))
+            except: failed += 1
+        bot.send_message(user_id, f"✅ <b>Broadcast Completed Successfully!</b>\n\n🚀 Delivered: {success}\n❌ Failed: {failed}", parse_mode="HTML", reply_markup=main_menu(user_id))
         return
 
-    # 2. GMAIL TASK: WAITING FOR SCREENSHOT AFTER GMAIL NAME
-    if user_id in user_states and user_states[user_id].get('state') == 'gmail_task_screenshot':
-        if message.content_type == 'photo':
-            file_id = message.photo[-1].file_id
-            gmail_name = user_states[user_id]['gmail_name']
-            
-            markup = InlineKeyboardMarkup()
-            markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"apprt_{user_id}"),
-                       InlineKeyboardButton("❌ Reject", callback_data=f"rejct_{user_id}"))
-            
-            admin_msg = (f"🔔 <b>NEW GMAIL TASK SUBMISSION</b>\n\n"
-                         f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-                         f"📧 <b>Gmail Name:</b> <code>{gmail_name}</code>\n\n"
-                         f"Please check screenshot.")
-            bot.send_photo(OWNER_ID, file_id, caption=admin_msg, parse_mode="HTML", reply_markup=markup)
-            
-            bot.send_message(user_id, "✅ <b>Apka Screenshot aur Gmail Name Admin ko bhaj diya gaya hai. Pls Wait For Checking in 24Hrs. Be Patient.</b>", parse_mode="HTML", reply_markup=main_menu(user_id))
-            del user_states[user_id]
-            return
-        else:
-            bot.send_message(user_id, "❌ Kripya task complete karne ke baad valid **Screenshot (Photo)** bhejein!")
-            return
-
-    # 3. NORMAL TEXT MENU & STATES HANDLER
-    if message.content_type == 'text':
+    # SCREENSHOT CATCHERS
+    if user_id in user_states:
+        state = user_states[user_id].get('state')
         
-        # 👉 STEP 1: SHOW RULES AND DONE BUTTON
+        if state == 'gmail_task_screenshot':
+            if message.content_type == 'photo':
+                gmail_name = user_states[user_id]['gmail_name']
+                markup = InlineKeyboardMarkup()
+                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"apprt_{user_id}"), InlineKeyboardButton("❌ Reject", callback_data=f"rejct_{user_id}"))
+                bot.send_photo(OWNER_ID, message.photo[-1].file_id, caption=f"🔔 <b>NEW GMAIL TASK SUBMISSION</b>\n👤 <code>{user_id}</code>\n📧 <code>{gmail_name}</code>", parse_mode="HTML", reply_markup=markup)
+                bot.send_message(user_id, "✅ <b>Submission Received!</b>\nYour screenshot is under review. Please allow up to 24 hours for verification.", parse_mode="HTML", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+                return
+            else:
+                bot.send_message(user_id, "❌ Invalid format. Please upload a clear <b>Screenshot (Photo)</b>.")
+                return
+        
+        if state == 'map_task_screenshot':
+            if message.content_type == 'photo':
+                task_id = user_states[user_id]['task_id']
+                task_data = run_query("SELECT link, review_text FROM map_tasks WHERE id=%s", (task_id,), fetch='one')
+                t_link, t_txt = task_data if task_data else ("Unknown", "Unknown")
+
+                markup = InlineKeyboardMarkup()
+                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"mappr_{user_id}_{task_id}"), InlineKeyboardButton("❌ Reject", callback_data=f"mrej_{user_id}_{task_id}"))
+                
+                admin_msg = (f"🗺️ <b>MAP REVIEW VERIFICATION</b>\n👤 <code>{user_id}</code>\n🔖 Task ID: {task_id}\n\n"
+                             f"🔗 <b>Assigned Link:</b>\n{t_link}\n\n"
+                             f"💬 <b>Assigned Text:</b>\n<code>{t_txt}</code>")
+                
+                bot.send_photo(OWNER_ID, message.photo[-1].file_id, caption=admin_msg, parse_mode="HTML", reply_markup=markup)
+                bot.send_message(user_id, "✅ <b>Review Submitted!</b>\nOur team is verifying your submission. Funds will be credited shortly.", parse_mode="HTML", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+                return
+            else:
+                bot.send_message(user_id, "❌ Invalid format. Please upload a clear <b>Screenshot (Photo)</b>.")
+                return
+
+    if message.content_type == 'text':
         if text == "📧 Gmail Task":
             if get_setting('gmail_task') == 'OFF' and not is_admin(user_id):
-                bot.send_message(user_id, "❌ Yeh option filhal Admin dwara **OFF** kar diya gaya hai. Kripya baad mein try karein.")
+                bot.send_message(user_id, "❌ <b>Currently Unavailable</b>\nThis task is temporarily disabled by the administrator.", parse_mode="HTML")
                 return
-            
             current_pass = get_setting('gmail_password')
-            msg = (f"📧 *GMAIL TASK*\n"
-                   f"💰 *Reward:* ₹15\n\n"
-                   f"⚠️ *Instructions & Rules:*\n"
-                   f"Rule - Create a new Gmail account.\n"
-                   f"Password must be - `{current_pass}`\n\n"
-                   f"👉 *Complete the task and click the button below!*")
+            reward = get_setting('reward_gmail')
+            msg = (f"📧 <b>GMAIL CREATION TASK</b>\n"
+                   f"💰 <b>Reward:</b> ₹{reward}\n\n"
+                   f"⚠️ <b>Instructions:</b>\n"
+                   f"• Create a brand new Gmail account.\n"
+                   f"• Use the exact password provided below:\n"
+                   f"🔐 <code>{current_pass}</code>\n\n"
+                   f"👉 <i>Click the button below once completed!</i>")
             markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("✅ Click Here When Done", callback_data="task_done"))
-            markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-            bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup)
+            markup.add(InlineKeyboardButton("✅ Mark as Completed", callback_data="task_done"))
+            markup.add(InlineKeyboardButton("🔙 Return to Main Menu", callback_data="back_to_main"))
+            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup)
 
         elif text == "📧 Old Gmail Task":
             if get_setting('old_gmail_task') == 'OFF' and not is_admin(user_id):
-                bot.send_message(user_id, "❌ Yeh option filhal Admin dwara **OFF** kar diya gaya hai. Kripya baad mein try karein.")
+                bot.send_message(user_id, "❌ <b>Currently Unavailable</b>\nThis task is temporarily disabled.", parse_mode="HTML")
                 return
             markup = InlineKeyboardMarkup()
-            markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-            msg = ("📧 *OLD GMAIL TASK*\n\n"
-                   "👉 Kripya apna valid **Old Gmail Account** yahan bhejein (jaise: `example@gmail.com`):")
-            bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup)
+            markup.add(InlineKeyboardButton("🔙 Return to Main Menu", callback_data="back_to_main"))
+            bot.send_message(user_id, "📧 <b>OLD GMAIL SUBMISSION</b>\n\n👉 Please provide your valid <b>Old Gmail Address</b>:", parse_mode="HTML", reply_markup=markup)
             user_states[user_id] = {'state': 'old_gmail_email'}
+
+        elif text == "🗺️ Map Review Task":
+            if get_setting('map_review_task') == 'OFF' and not is_admin(user_id):
+                bot.send_message(user_id, "❌ <b>Map Reviews are currently disabled by the Admin.</b>", parse_mode="HTML")
+                return
+            
+            rules = get_setting('map_rules')
+            reward = get_setting('reward_map')
+            msg = (f"🗺️ <b>GOOGLE MAPS REVIEW</b>\n"
+                   f"💰 <b>Reward:</b> ₹{reward}\n\n"
+                   f"📜 <b>Guidelines & Procedure:</b>\n{rules}\n\n"
+                   f"👇 <i>Accept the terms below to receive your unique assignment:</i>")
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("✅ I Agree (Initiate Task)", callback_data="map_agree"))
+            markup.add(InlineKeyboardButton("🔙 Return to Main Menu", callback_data="back_to_main"))
+            
+            if os.path.exists("31928.jpg"):
+                with open("31928.jpg", "rb") as photo:
+                    bot.send_photo(user_id, photo, caption=msg, parse_mode="HTML", reply_markup=markup)
+            else:
+                bot.send_message(user_id, msg + "\n\n<i>(Guideline image currently unavailable)</i>", parse_mode="HTML", reply_markup=markup)
 
         elif text == "💰 Wallet":
             balance_inr = get_balance(user_id)
-            balance_usd = balance_inr / USDT_TO_INR_RATE
-            
-            msg = (f"💼 *YOUR WALLET*\n"
-                   f"━━━━━━━━━━━━━━━━━━\n"
-                   f"💵 *Balance:* ₹{balance_inr:.2f} / ${balance_usd:.2f} USD\n"
-                   f"━━━━━━━━━━━━━━━━━━\n\n"
-                   f"📊 *Recent Transactions:*\n")
+            msg = (f"💼 <b>ACCOUNT DASHBOARD</b>\n"
+                   f"━━━━━━━━━━━━━━━━━━━\n"
+                   f"💵 <b>Available Balance:</b> ₹{balance_inr:.2f} / ${balance_inr/USDT_TO_INR_RATE:.2f} USD\n"
+                   f"━━━━━━━━━━━━━━━━━━━\n\n"
+                   f"📊 <b>Recent Transactions:</b>\n")
             records = run_query("SELECT type, amount, detail, date FROM history WHERE user_id=%s ORDER BY id DESC LIMIT 5", (user_id,), fetch='all')
-            if not records:
-                msg += "📝 _No history found yet._"
-            for r in records:
-                icon = "🟢" if r[0] == "CREDIT" else "🔴"
-                r_usd = r[1] / USDT_TO_INR_RATE
-                msg += f"{icon} *₹{r[1]} (${r_usd:.2f}u)* | {r[2]}\n📅 {r[3]}\n\n"
-            bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=main_menu(user_id))
+            if not records: msg += "📝 <i>No transaction records found.</i>"
+            for r in records: msg += f"{'🟢' if r[0]=='CREDIT' else '🔴'} <b>₹{r[1]}</b> | {r[2]}\n📅 <i>{r[3]}</i>\n\n"
+            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=main_menu(user_id))
 
         elif text == "📞 Contact & Help":
-            msg = ("📞 <b>CONTACT & SUPPORT</b>\n\n"
-                   "Agar aapko koi problem aa rahi hai ya payment se related koi sawal hai, toh humare Admin se direct baat karein:\n\n"
-                   f"👨‍💻 <b>Admin ID:</b> @{ADMIN_USERNAME}\n"
-                   "💬 <i>Click on the username to send a message.</i>")
-            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=main_menu(user_id))
+            bot.send_message(user_id, f"📞 <b>SUPPORT CENTER</b>\n\nFor any inquiries or assistance, please reach out to our administration:\n👨‍💻 <b>Support Desk:</b> @{ADMIN_USERNAME}", parse_mode="HTML", reply_markup=main_menu(user_id))
 
         elif text == "💸 Withdraw":
             if get_setting('withdraw') == 'OFF' and not is_admin(user_id):
-                bot.send_message(user_id, "❌ Withdrawals filhal Admin dwara **OFF** kiye gaye hain.")
+                bot.send_message(user_id, "❌ <b>Withdrawals are temporarily suspended.</b>", parse_mode="HTML")
                 return
             markup = ReplyKeyboardMarkup(resize_keyboard=True)
             markup.row(KeyboardButton("🏦 UPI"), KeyboardButton("🪙 USDT"))
             markup.row(KeyboardButton("📜 Withdraw History"), KeyboardButton("🔙 Back to Main"))
-            msg = ("💸 *WITHDRAW FUNDS*\n\n"
-                   "Apna preferred withdrawal method select karein:\n"
-                   f"🔹 *UPI* (Minimum ₹{get_setting('min_upi')})\n"
-                   f"🔹 *USDT* (Minimum ${get_setting('min_usdt')})")
-            bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(user_id, f"💸 <b>FUNDS WITHDRAWAL</b>\n\nPlease select your preferred payout gateway:\n🔹 <b>UPI</b> (Min Request: ₹{get_setting('min_upi')})\n🔹 <b>USDT</b> (Min Request: ${get_setting('min_usdt')})", parse_mode="HTML", reply_markup=markup)
             
         elif text == "🔙 Back to Main":
-            if user_id in user_states:
-                del user_states[user_id]
-            bot.send_message(user_id, "🏠 *Main Menu*", parse_mode="Markdown", reply_markup=main_menu(user_id))
+            if user_id in user_states: del user_states[user_id]
+            bot.send_message(user_id, "🏠 <b>Main Menu</b>", parse_mode="HTML", reply_markup=main_menu(user_id))
 
         elif text in ["🏦 UPI", "🪙 USDT"]:
-            if get_setting('withdraw') == 'OFF' and not is_admin(user_id):
-                bot.send_message(user_id, "❌ Withdrawals are currently disabled.")
-                return
-            balance_inr = get_balance(user_id)
-            if text == "🏦 UPI":
-                min_amount = float(get_setting('min_upi'))
-                if balance_inr < min_amount:
-                    bot.send_message(user_id, f"❌ *Insufficient Balance!*\nMinimum withdrawal ke liye ₹{min_amount} chahiye.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                else:
-                    bot.send_message(user_id, f"📝 Kripya apna withdrawal amount likhein in **INR (₹)** (Min: ₹{min_amount}):", parse_mode="Markdown", reply_markup=telebot.types.ReplyKeyboardRemove())
-                    user_states[user_id] = {'state': 'withdraw_amount', 'method': text}
+            if get_setting('withdraw') == 'OFF' and not is_admin(user_id): return
+            bal = get_balance(user_id)
+            min_val = float(get_setting('min_upi')) if text == "🏦 UPI" else float(get_setting('min_usdt'))
+            check_bal = bal if text == "🏦 UPI" else (bal / USDT_TO_INR_RATE)
+            
+            if check_bal < min_val:
+                bot.send_message(user_id, f"❌ <b>Insufficient Funds.</b> Minimum payout threshold is {min_val}.", parse_mode="HTML", reply_markup=main_menu(user_id))
             else:
-                min_usd = float(get_setting('min_usdt'))
-                min_inr = min_usd * USDT_TO_INR_RATE
-                if balance_inr < min_inr:
-                    bot.send_message(user_id, f"❌ *Insufficient Balance!*\nMinimum withdrawal ke liye ${min_usd} USD (₹{min_inr:.2f}) chahiye.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                else:
-                    bot.send_message(user_id, f"📝 Kripya apna withdrawal amount likhein in **USDT ($)** (Min: ${min_usd}):", parse_mode="Markdown", reply_markup=telebot.types.ReplyKeyboardRemove())
-                    user_states[user_id] = {'state': 'withdraw_amount', 'method': text}
+                curr = "INR (₹)" if text == "🏦 UPI" else "USDT ($)"
+                bot.send_message(user_id, f"📝 Please specify the withdrawal amount in <b>{curr}</b>:", parse_mode="HTML", reply_markup=telebot.types.ReplyKeyboardRemove())
+                user_states[user_id] = {'state': 'withdraw_amount', 'method': text}
 
         elif text == "📜 Withdraw History":
             records = run_query("SELECT detail, amount, date FROM history WHERE user_id=%s AND type='DEBIT' ORDER BY id DESC LIMIT 10", (user_id,), fetch='all')
-            if not records:
-                bot.send_message(user_id, "📝 _Aapki koi withdrawal history nahi hai._", parse_mode="Markdown", reply_markup=main_menu(user_id))
+            if not records: bot.send_message(user_id, "📝 <i>No payout records found.</i>", parse_mode="HTML", reply_markup=main_menu(user_id))
             else:
-                msg = "📜 *WITHDRAWAL HISTORY:*\n\n"
-                for r in records:
-                    r_usd = r[1] / USDT_TO_INR_RATE
-                    msg += f"🔴 *₹{r[1]} (${r_usd:.2f}u)* | {r[0]}\n📅 {r[2]}\n\n"
-                bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=main_menu(user_id))
+                msg = "📜 <b>PAYOUT HISTORY:</b>\n━━━━━━━━━━━━━━━━━━━\n"
+                for r in records: msg += f"🔴 <b>₹{r[1]}</b> | {r[0]}\n📅 <i>{r[2]}</i>\n\n"
+                bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=main_menu(user_id))
 
         elif text == "⚙️ Admin Panel" and is_admin(user_id):
-            markup = InlineKeyboardMarkup()
-            markup.row(InlineKeyboardButton("🤖 Bot ON/OFF", callback_data="admin_bot_toggle"))
-            if user_id == OWNER_ID:
-                markup.row(InlineKeyboardButton("👥 Manage Admins", callback_data="admin_manage"))
-            markup.row(InlineKeyboardButton("📊 Total Users", callback_data="admin_total_users"))
-            markup.row(InlineKeyboardButton("🟢/🔴 Toggle Options", callback_data="admin_toggles"))
-            markup.row(InlineKeyboardButton("⚙️ Set Min Withdraw", callback_data="admin_set_min"))
-            markup.row(InlineKeyboardButton("🔑 Change Gmail Pass", callback_data="admin_set_pass"))
-            markup.row(InlineKeyboardButton("📜 Approved Withdrawals", callback_data="admin_approved_list"))
-            markup.row(InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"))
-            markup.row(InlineKeyboardButton("💸 Add Balance to User", callback_data="admin_addbal"))
-            markup.row(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-            bot.send_message(user_id, "🛠️ *ADMIN PANEL*\nKripya option select karein:", parse_mode="Markdown", reply_markup=markup)
+            bot.send_message(user_id, "🛠️ <b>EXECUTIVE DASHBOARD</b>", parse_mode="HTML", reply_markup=admin_markup(user_id))
 
-        # --- DYNAMIC STATES ---
+        # --- DYNAMIC STATES FOR ADMIN & WITHDRAWALS ---
         elif user_id in user_states:
             state_data = user_states[user_id]
-            
-            if state_data['state'] == 'admin_add_id' and user_id == OWNER_ID:
+            st = state_data['state']
+
+            if st == 'admin_map_manage_id' and is_admin(user_id):
                 try:
-                    new_admin_id = int(text.strip())
-                    run_query("INSERT INTO admins (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (new_admin_id,), commit=True)
-                    bot.send_message(user_id, f"✅ Success! User <code>{new_admin_id}</code> ko Admin access de diya gaya hai.", parse_mode="HTML", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
+                    tid = int(text.strip())
+                    task = run_query("SELECT link, review_text, status FROM map_tasks WHERE id=%s", (tid,), fetch='one')
+                    if not task:
+                        bot.send_message(user_id, "❌ Invalid Task ID.", reply_markup=main_menu(user_id))
+                    else:
+                        msg = f"🛠️ <b>MANAGE TASK ID:</b> <code>{tid}</code>\n━━━━━━━━━━━━━━━━━━━\n🔗 <b>Link:</b> {task[0]}\n💬 <b>Text:</b> <code>{task[1]}</code>\n📌 <b>Status:</b> {task[2]}"
+                        markup = InlineKeyboardMarkup()
+                        markup.row(InlineKeyboardButton("🗑️ Delete Task", callback_data=f"mdel_{tid}"))
+                        markup.row(InlineKeyboardButton("🔗 Edit Link", callback_data=f"medl_{tid}"), InlineKeyboardButton("💬 Edit Text", callback_data=f"medt_{tid}"))
+                        bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup)
                 except ValueError:
-                    bot.send_message(user_id, "❌ Kripya valid numeric User ID dalein.")
-                return
-
-            elif state_data['state'] == 'admin_remove_id' and user_id == OWNER_ID:
-                try:
-                    rem_admin_id = int(text.strip())
-                    if rem_admin_id == OWNER_ID:
-                        bot.send_message(user_id, "❌ Owner ko remove nahi kiya ja sakta!")
-                        return
-                    run_query("DELETE FROM admins WHERE user_id=%s", (rem_admin_id,), commit=True)
-                    bot.send_message(user_id, f"✅ Success! User <code>{rem_admin_id}</code> se Admin access hata diya gaya hai.", parse_mode="HTML", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
-                except ValueError:
-                    bot.send_message(user_id, "❌ Kripya valid numeric User ID dalein.")
-                return
-
-            # 👉 STEP 3: USER SUBMITS GMAIL NAME -> ASK FOR SCREENSHOT
-            elif state_data['state'] == 'gmail_task_name':
-                gmail_name = text.strip()
-                user_states[user_id] = {'state': 'gmail_task_screenshot', 'gmail_name': gmail_name}
-                
-                markup = InlineKeyboardMarkup()
-                markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-                bot.send_message(user_id, f"📸 *Gmail Name saved:* `{gmail_name}`\n\n👉 Ab task complete karne ke baad **Screenshot (Photo)** bhejein:", parse_mode="Markdown", reply_markup=markup)
-                return
-
-            elif state_data['state'] == 'admin_set_gmail_pass' and is_admin(user_id):
-                new_pass = text.strip()
-                update_setting('gmail_password', new_pass)
-                bot.send_message(user_id, f"✅ Gmail task password successfully updated to: <code>{new_pass}</code>", parse_mode="HTML", reply_markup=main_menu(user_id))
-                del user_states[user_id]
-                return
-
-            elif state_data['state'] == 'admin_set_min_upi' and is_admin(user_id):
-                try:
-                    new_val = float(text)
-                    update_setting('min_upi', new_val)
-                    bot.send_message(user_id, f"✅ UPI Minimum withdrawal successfully updated to: ₹{new_val}", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
-                except ValueError:
-                    bot.send_message(user_id, "❌ Kripya valid number dalein.")
-                return
-
-            elif state_data['state'] == 'admin_set_min_usdt' and is_admin(user_id):
-                try:
-                    new_val = float(text)
-                    update_setting('min_usdt', new_val)
-                    bot.send_message(user_id, f"✅ USDT Minimum withdrawal successfully updated to: ${new_val}", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
-                except ValueError:
-                    bot.send_message(user_id, "❌ Kripya valid number dalein.")
-                return
-
-            elif state_data['state'] == 'old_gmail_email':
-                gmail_email = text.strip()
-                if "@" not in gmail_email or not gmail_email.endswith("@gmail.com"):
-                    bot.send_message(user_id, "❌ *Invalid Gmail Format!*\nKripya sahi format me gmail bhejein (Jaise: `yourname@gmail.com`). Dobara type karein:")
-                    return
-
-                user_states[user_id] = {'state': 'old_gmail_password', 'gmail_email': gmail_email}
-                markup = InlineKeyboardMarkup()
-                markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-                bot.send_message(user_id, f"✅ Email saved: <code>{gmail_email}</code>\n\n👉 Ab iska <b>Password</b> bhejein:", parse_mode="HTML", reply_markup=markup)
-
-            elif state_data['state'] == 'old_gmail_password':
-                gmail_pass = text.strip()
-                gmail_email = state_data['gmail_email']
-                
-                bot.send_message(user_id, "✅ *Old Gmail Submitted!*\nAapka task Admin ke paas bhej diya gaya hai.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                
-                markup = InlineKeyboardMarkup()
-                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"oldappr_{user_id}"),
-                           InlineKeyboardButton("❌ Reject", callback_data=f"oldrej_{user_id}"))
-                
-                admin_msg = (f"🔔 <b>NEW OLD GMAIL SUBMISSION</b>\n\n"
-                             f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-                             f"📧 <b>Gmail Name:</b> <code>{gmail_email}</code>\n"
-                             f"🔑 <b>Password:</b> <code>{gmail_pass}</code>")
-                bot.send_message(OWNER_ID, admin_msg, parse_mode="HTML", reply_markup=markup)
+                    bot.send_message(user_id, "❌ Kripya valid numeric Task ID dalein.")
                 del user_states[user_id]
 
-            elif state_data['state'] == 'withdraw_amount':
-                try:
-                    input_val = float(text)
-                    method = state_data['method']
-                    balance_inr = get_balance(user_id)
-                    
-                    if method == "🏦 UPI":
-                        amount_inr = input_val
-                        min_val = float(get_setting('min_upi'))
-                        if amount_inr < min_val or amount_inr > balance_inr:
-                            bot.send_message(user_id, f"❌ *Invalid Amount!* Min limit ₹{min_val} hai ya balance kam hai.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                            del user_states[user_id]
-                            return
-                    else: 
-                        amount_usd = input_val
-                        amount_inr = amount_usd * USDT_TO_INR_RATE
-                        min_val = float(get_setting('min_usdt'))
-                        if amount_usd < min_val or amount_inr > balance_inr:
-                            bot.send_message(user_id, f"❌ *Invalid Amount!* Min limit ${min_val} hai ya balance kam hai.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                            del user_states[user_id]
-                            return
+            elif st == 'admin_map_edit_link' and is_admin(user_id):
+                tid = state_data['task_id']
+                run_query("UPDATE map_tasks SET link=%s WHERE id=%s", (text.strip(), tid), commit=True)
+                bot.send_message(user_id, f"✅ Task {tid} ka Link Update ho gaya!", reply_markup=main_menu(user_id))
+                del user_states[user_id]
 
-                    user_states[user_id]['amount_inr'] = amount_inr
-                    user_states[user_id]['display_amount'] = input_val
+            elif st == 'admin_map_edit_text' and is_admin(user_id):
+                tid = state_data['task_id']
+                run_query("UPDATE map_tasks SET review_text=%s WHERE id=%s", (text.strip(), tid), commit=True)
+                bot.send_message(user_id, f"✅ Task {tid} ka Review Text Update ho gaya!", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+
+            elif st == 'admin_set_map_rules' and is_admin(user_id):
+                update_setting('map_rules', text)
+                bot.send_message(user_id, "✅ Map Task Rules updated successfully!", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+
+            elif st == 'admin_map_add_single' and is_admin(user_id):
+                try:
+                    link, rev_txt = text.split('|', 1)
+                    run_query("INSERT INTO map_tasks (link, review_text) VALUES (%s, %s)", (link.strip(), rev_txt.strip()), commit=True)
+                    bot.send_message(user_id, "✅ Single Map Task Added!", reply_markup=main_menu(user_id))
+                except:
+                    bot.send_message(user_id, "❌ Format galat hai. (Link | Text) use karein.")
+                del user_states[user_id]
+
+            elif st == 'admin_map_add_bulk' and is_admin(user_id):
+                lines = text.split('\n')
+                added = 0
+                for line in lines:
+                    if '|' in line:
+                        link, rev_txt = line.split('|', 1)
+                        run_query("INSERT INTO map_tasks (link, review_text) VALUES (%s, %s)", (link.strip(), rev_txt.strip()), commit=True)
+                        added += 1
+                bot.send_message(user_id, f"✅ Bulk Import Done! Added {added} tasks in Stock.", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+
+            elif st.startswith('admin_set_reward_') and is_admin(user_id):
+                try:
+                    val = float(text)
+                    key = st.replace('admin_set_', '') 
+                    update_setting(key, val)
+                    bot.send_message(user_id, f"✅ Configuration applied. Reward updated to ₹{val}", reply_markup=main_menu(user_id))
+                    del user_states[user_id]
+                except ValueError:
+                    bot.send_message(user_id, "❌ Please input a valid numeric value.")
+
+            elif st == 'admin_add_id' and user_id == OWNER_ID:
+                try:
+                    run_query("INSERT INTO admins (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING", (int(text),), commit=True)
+                    bot.send_message(user_id, f"✅ Administrator Privileges Granted!", reply_markup=main_menu(user_id))
+                    del user_states[user_id]
+                except: bot.send_message(user_id, "❌ Invalid Identity.")
+
+            elif st == 'admin_remove_id' and user_id == OWNER_ID:
+                try:
+                    run_query("DELETE FROM admins WHERE user_id=%s", (int(text),), commit=True)
+                    bot.send_message(user_id, f"✅ Administrator Privileges Revoked!", reply_markup=main_menu(user_id))
+                    del user_states[user_id]
+                except: bot.send_message(user_id, "❌ Invalid Identity.")
+
+            elif st == 'gmail_task_name':
+                user_states[user_id] = {'state': 'gmail_task_screenshot', 'gmail_name': text.strip()}
+                bot.send_message(user_id, f"📸 <b>Account Verified:</b> <code>{text.strip()}</code>\n👉 Please securely upload your <b>Screenshot</b> for final validation:", parse_mode="HTML")
+
+            elif st == 'admin_set_gmail_pass' and is_admin(user_id):
+                update_setting('gmail_password', text.strip())
+                bot.send_message(user_id, f"✅ Security Key updated to: <code>{text.strip()}</code>", parse_mode="HTML", reply_markup=main_menu(user_id))
+                del user_states[user_id]
+
+            elif st == 'admin_set_min_upi' and is_admin(user_id):
+                try: update_setting('min_upi', float(text)); bot.send_message(user_id, f"✅ UPI Limit Set to ₹{text}", reply_markup=main_menu(user_id)); del user_states[user_id]
+                except: bot.send_message(user_id, "❌ Invalid format.")
+
+            elif st == 'admin_set_min_usdt' and is_admin(user_id):
+                try: update_setting('min_usdt', float(text)); bot.send_message(user_id, f"✅ USDT Limit Set to ${text}", reply_markup=main_menu(user_id)); del user_states[user_id]
+                except: bot.send_message(user_id, "❌ Invalid format.")
+
+            elif st == 'old_gmail_email':
+                user_states[user_id] = {'state': 'old_gmail_password', 'gmail_email': text.strip()}
+                bot.send_message(user_id, f"✅ <b>Data Recorded:</b> <code>{text.strip()}</code>\n👉 Kindly provide the associated <b>Security Password</b>:", parse_mode="HTML")
+
+            elif st == 'old_gmail_password':
+                bot.send_message(user_id, "✅ <b>Credentials securely transmitted.</b> Pending verification.", parse_mode="HTML", reply_markup=main_menu(user_id))
+                markup = InlineKeyboardMarkup()
+                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"oldappr_{user_id}"), InlineKeyboardButton("❌ Reject", callback_data=f"oldrej_{user_id}"))
+                bot.send_message(OWNER_ID, f"🔔 <b>OLD GMAIL SUBMISSION</b>\n👤 <code>{user_id}</code>\n📧 <code>{state_data['gmail_email']}</code>\n🔑 <code>{text.strip()}</code>", parse_mode="HTML", reply_markup=markup)
+                del user_states[user_id]
+
+            elif st == 'withdraw_amount':
+                try:
+                    val = float(text)
+                    bal = get_balance(user_id)
+                    meth = state_data['method']
+                    if meth == "🏦 UPI":
+                        if val < float(get_setting('min_upi')) or val > bal: raise Exception
+                    else:
+                        if val < float(get_setting('min_usdt')) or (val*USDT_TO_INR_RATE) > bal: raise Exception
+                    user_states[user_id]['amt'] = val
                     user_states[user_id]['state'] = 'withdraw_address'
-                    
-                    ask_str = "UPI ID" if method == "🏦 UPI" else "BP20 Address"
-                    markup = InlineKeyboardMarkup()
-                    markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-                    bot.send_message(user_id, f"✅ Amount saved: {input_val} {'₹' if method == '🏦 UPI' else '$'}\n\n👉 Ab apna *{ask_str}* bhejein:", parse_mode="Markdown", reply_markup=markup)
-                except ValueError:
-                    bot.send_message(user_id, "❌ Sirf numbers mein amount likhein.", parse_mode="Markdown", reply_markup=main_menu(user_id))
+                    bot.send_message(user_id, f"✅ Value acknowledged. Please provide your precise <b>UPI/BP20 Destination Address</b>:", parse_mode="HTML")
+                except:
+                    bot.send_message(user_id, "❌ Limit anomaly or insufficient account balance detected.", reply_markup=main_menu(user_id))
                     del user_states[user_id]
 
-            elif state_data['state'] == 'withdraw_address':
-                address = text.strip()
-                method = state_data['method']
+            elif st == 'withdraw_address':
+                meth = state_data['method']
+                val = state_data['amt']
+                val_inr = val if meth == "🏦 UPI" else val * USDT_TO_INR_RATE
+                deduct_balance(user_id, val_inr, f"Pending {meth} Withdraw ({val})")
                 
-                if method == "🏦 UPI" and "@" not in address:
-                    bot.send_message(user_id, "❌ *Invalid UPI ID!*\nSahi UPI ID dalein jisme '@' ho. Dobara bhejein:")
-                    return
-                    
-                if method == "🪙 USDT" and (not address.startswith("0x") or len(address) < 30):
-                    bot.send_message(user_id, "❌ *Invalid USDT Address!*\nAddress '0x' se start hona chahiye. Dobara bhejein:")
-                    return
-
-                amount_inr = state_data['amount_inr']
-                display_amount = state_data['display_amount']
-                
-                deduct_balance(user_id, amount_inr, f"Pending {method} Withdraw ({display_amount})")
-                
-                pending_id = run_query("INSERT INTO pending_withdraws (user_id, method, address, amount) VALUES (%s, %s, %s, %s) RETURNING id", 
-                                       (user_id, method, address, display_amount), fetch='id', commit=True)
-                
-                bot.send_message(user_id, "✅ *Request Submitted!*\nAapka withdrawal request Admin ko bhej diya gaya hai.", parse_mode="Markdown", reply_markup=main_menu(user_id))
+                pid = run_query("INSERT INTO pending_withdraws (user_id, method, address, amount) VALUES (%s, %s, %s, %s) RETURNING id", (user_id, meth, text.strip(), val), fetch='id', commit=True)
+                bot.send_message(user_id, "✅ <b>Disbursement Request Logged!</b>\nYour transaction will be processed post administrative clearance.", parse_mode="HTML", reply_markup=main_menu(user_id))
                 
                 markup = InlineKeyboardMarkup()
-                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"apprw_{pending_id}"),
-                           InlineKeyboardButton("❌ Reject", callback_data=f"rejcc_{pending_id}"))
-                
-                curr_symbol = "₹" if method == "🏦 UPI" else "$"
-                admin_msg = (f"🔔 <b>NEW WITHDRAW REQUEST</b>\n\n"
-                             f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-                             f"🏦 <b>Method:</b> {method}\n"
-                             f"💰 <b>Amount:</b> {curr_symbol}{display_amount}\n"
-                             f"📌 <b>Address:</b> <code>{address}</code>")
-                bot.send_message(OWNER_ID, admin_msg, parse_mode="HTML", reply_markup=markup)
+                markup.row(InlineKeyboardButton("✅ Approve", callback_data=f"apprw_{pid}"), InlineKeyboardButton("❌ Reject", callback_data=f"rejcc_{pid}"))
+                bot.send_message(OWNER_ID, f"🔔 <b>PAYOUT REQUEST</b>\n👤 <code>{user_id}</code>\n🏦 {meth}\n💰 {val}\n📌 <code>{text.strip()}</code>", parse_mode="HTML", reply_markup=markup)
                 del user_states[user_id]
 
-            elif state_data['state'] == 'admin_wait_uid' and is_admin(user_id):
-                try:
-                    target_uid = int(text)
-                    user_states[user_id] = {'state': 'admin_wait_amt', 'target_uid': target_uid}
-                    bot.send_message(user_id, f"✅ User ID saved: `{target_uid}`\n\n👉 Ab *Amount (in ₹)* likhein jo add karna hai:", parse_mode="Markdown")
-                except ValueError:
-                    bot.send_message(user_id, "❌ User ID number format mein hona chahiye.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
+            elif st == 'admin_wait_uid' and is_admin(user_id):
+                try: user_states[user_id] = {'state': 'admin_wait_amt', 'uid': int(text)}; bot.send_message(user_id, "👉 Provide target amount in ₹:")
+                except: del user_states[user_id]
 
-            elif state_data['state'] == 'admin_wait_amt' and is_admin(user_id):
+            elif st == 'admin_wait_amt' and is_admin(user_id):
                 try:
-                    amount = float(text)
-                    target_uid = state_data['target_uid']
-                    add_balance(target_uid, amount, "Bonus / Admin Added Balance")
-                    
-                    bot.send_message(user_id, f"✅ **Success!** ₹{amount} added to user `{target_uid}`.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                    try:
-                        bot.send_message(target_uid, f"🎉 *Congratulations!*\nAdmin has added ₹{amount} to your wallet!", parse_mode="Markdown")
-                    except:
-                        pass 
-                    del user_states[user_id]
-                except ValueError:
-                    bot.send_message(user_id, "❌ Amount number hona chahiye.", parse_mode="Markdown", reply_markup=main_menu(user_id))
-                    del user_states[user_id]
+                    add_balance(state_data['uid'], float(text), "Admin Added Balance")
+                    bot.send_message(user_id, "✅ Liquidity successfully routed!", reply_markup=main_menu(user_id))
+                    try: bot.send_message(state_data['uid'], f"🎉 <b>System Notification</b>\nAn administrative bonus of ₹{text} has been credited to your portfolio!", parse_mode="HTML")
+                    except: pass
+                except: pass
+                del user_states[user_id]
 
 # --- SECURED CALLBACK QUERIES ---
 @bot.callback_query_handler(func=lambda call: True)
@@ -514,102 +483,214 @@ def callback_query(call):
     data = call.data
 
     if data == "back_to_main":
-        if user_id in user_states:
-            del user_states[user_id]
-        try:
-            bot.delete_message(user_id, call.message.message_id)
-        except:
-            pass
-        bot.send_message(user_id, "🏠 *Main Menu*", parse_mode="Markdown", reply_markup=main_menu(user_id))
+        if user_id in user_states: del user_states[user_id]
+        try: bot.delete_message(user_id, call.message.message_id)
+        except: pass
+        bot.send_message(user_id, "🏠 <b>Main Menu</b>", parse_mode="HTML", reply_markup=main_menu(user_id))
 
-    # 👉 STEP 2: USER CLICKS "DONE" -> ASK FOR GMAIL NAME
-    elif data == "task_done":
-        if get_setting('gmail_task') == 'OFF' and not is_admin(user_id):
-            bot.answer_callback_query(call.id, "Gmail Task is currently OFF!", show_alert=True)
+    # 👉 MAP REVIEW SYSTEM logic
+    elif data == "map_agree":
+        if get_setting('map_review_task') == 'OFF':
+            bot.answer_callback_query(call.id, "Map Task is currently disabled!", show_alert=True); return
+        
+        chk = run_query("SELECT id, link, review_text FROM map_tasks WHERE assigned_to=%s AND status='PENDING'", (user_id,), fetch='one')
+        if chk:
+            t_id, t_link, t_txt = chk
+            msg = f"⚠️ <b>Action Blocked</b>\nYou currently hold an active unresolved assignment:\n\n🔗 <b>Assigned Resource:</b>\n{t_link}\n\n💬 <b>Required Transcript:</b>\n<code>{t_txt}</code>"
+            markup = InlineKeyboardMarkup()
+            markup.row(InlineKeyboardButton("✅ Mark as Completed", callback_data=f"mapdone_{t_id}"), InlineKeyboardButton("❌ Abort Operation", callback_data=f"mapcancel_{t_id}"))
+            bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup)
             return
-        markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-        bot.send_message(user_id, "📧 Kripya apna **Gmail Account Name / Email** yahan type karke bhejein:", parse_mode="Markdown", reply_markup=markup)
+
+        task = run_query('''
+            UPDATE map_tasks SET status='PENDING', assigned_to=%s 
+            WHERE id = (SELECT id FROM map_tasks WHERE status='AVAILABLE' LIMIT 1 FOR UPDATE SKIP LOCKED) 
+            RETURNING id, link, review_text
+        ''', (user_id,), fetch='one', commit=True)
+        
+        if not task:
+            bot.answer_callback_query(call.id, "🚫 We are currently out of Review Tasks. Check back soon!", show_alert=True)
+        else:
+            t_id, t_link, t_txt = task
+            msg = f"🎉 <b>Asset Allocated!</b>\n\n🔗 <b>Target Directory:</b>\n{t_link}\n\n💬 <b>Required Publish Data:</b>\n<code>{t_txt}</code>\n\n👉 <i>Select 'Completed' upon successful execution.</i>"
+            markup = InlineKeyboardMarkup()
+            markup.row(InlineKeyboardButton("✅ Mark as Completed", callback_data=f"mapdone_{t_id}"), InlineKeyboardButton("❌ Abort Operation", callback_data=f"mapcancel_{t_id}"))
+            bot.edit_message_text(msg, user_id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
+
+    elif data.startswith("mapdone_"):
+        t_id = data.split("_")[1]
+        user_states[user_id] = {'state': 'map_task_screenshot', 'task_id': t_id}
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Discard", callback_data="back_to_main"))
+        bot.send_message(user_id, "📸 <b>Awaiting Validation:</b>\nPlease upload your unedited screenshot proof below:", parse_mode="HTML", reply_markup=markup)
+
+    elif data.startswith("mapcancel_"):
+        t_id = data.split("_")[1]
+        run_query("UPDATE map_tasks SET status='AVAILABLE', assigned_to=NULL WHERE id=%s", (t_id,), commit=True)
+        bot.edit_message_text("❌ <b>Operation Aborted.</b> The task has been successfully re-queued to the grid.", user_id, call.message.message_id, parse_mode="HTML")
+
+    # 🛠️ ADMIN MAP STOCK MANAGER CALLBACKS
+    elif data == "map_view_stock" and is_admin(user_id):
+        records = run_query("SELECT id, link, review_text FROM map_tasks WHERE status='AVAILABLE' ORDER BY id ASC LIMIT 15", fetch='all')
+        if not records:
+            bot.answer_callback_query(call.id, "📦 Stock is completely empty!", show_alert=True)
+            return
+        total_avail = run_query("SELECT count(id) FROM map_tasks WHERE status='AVAILABLE'", fetch='one')[0]
+        msg = f"📦 <b>CURRENT MAP TASK STOCK</b>\nTotal Available: <b>{total_avail}</b>\n<i>(Showing oldest 15 tasks)</i>\n━━━━━━━━━━━━━━━━━━━\n"
+        for r in records:
+            msg += f"🆔 <b>ID:</b> <code>{r[0]}</code>\n🔗 {r[1]}\n💬 <code>{r[2][:25]}...</code>\n\n"
+        bot.send_message(user_id, msg, parse_mode="HTML")
+
+    elif data == "map_manage_task" and is_admin(user_id):
+        user_states[user_id] = {'state': 'admin_map_manage_id'}
+        bot.send_message(user_id, "📝 Please specify the <b>Task ID</b> you wish to Edit or Delete:", parse_mode="HTML")
+
+    elif data.startswith("mdel_") and is_admin(user_id):
+        tid = int(data.split("_")[1])
+        run_query("DELETE FROM map_tasks WHERE id=%s", (tid,), commit=True)
+        bot.edit_message_text(f"✅ <b>Task ID {tid} successfully eradicated from the grid.</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+
+    elif data.startswith("medl_") and is_admin(user_id):
+        tid = int(data.split("_")[1])
+        user_states[user_id] = {'state': 'admin_map_edit_link', 'task_id': tid}
+        bot.send_message(user_id, "🔗 Please insert the updated <b>Resource Link</b>:", parse_mode="HTML")
+
+    elif data.startswith("medt_") and is_admin(user_id):
+        tid = int(data.split("_")[1])
+        user_states[user_id] = {'state': 'admin_map_edit_text', 'task_id': tid}
+        bot.send_message(user_id, "💬 Please insert the updated <b>Review Transcript</b>:", parse_mode="HTML")
+
+    elif data.startswith("mappr_") and is_admin(user_id):
+        tgt = int(data.split("_")[1])
+        t_id = int(data.split("_")[2])
+        rw = float(get_setting('reward_map'))
+        add_balance(tgt, rw, "Map Review Approved")
+        run_query("UPDATE map_tasks SET status='COMPLETED' WHERE id=%s", (t_id,), commit=True)
+        try: bot.send_message(tgt, f"🎉 <b>Validation Complete!</b>\n₹{rw} has been allocated to your account.", parse_mode="HTML")
+        except: pass
+        try: bot.edit_message_caption(f"✅ Clearance Granted for <code>{tgt}</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        except: pass
+
+    elif data.startswith("mrej_") and is_admin(user_id):
+        tgt = int(data.split("_")[1])
+        t_id = int(data.split("_")[2])
+        run_query("UPDATE map_tasks SET status='AVAILABLE', assigned_to=NULL WHERE id=%s", (t_id,), commit=True)
+        try: bot.send_message(tgt, f"❌ <b>Validation Failed.</b> Your review submission did not meet the necessary criteria.", parse_mode="HTML")
+        except: pass
+        try: bot.edit_message_caption(f"❌ Clearance Denied (Re-queued) for <code>{tgt}</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+        except: pass
+
+    elif data == "task_done":
+        if get_setting('gmail_task') == 'OFF' and not is_admin(user_id): return
+        markup = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Discard", callback_data="back_to_main"))
+        bot.send_message(user_id, "📧 Provide your newly generated <b>Gmail Address</b>:", parse_mode="HTML", reply_markup=markup)
         user_states[user_id] = {'state': 'gmail_task_name'}
 
-    elif data == "admin_total_users" and is_admin(user_id):
-        users = run_query("SELECT user_id FROM users", fetch='all')
-        total = len(users) if users else 0
-        bot.answer_callback_query(call.id, f"Total Users: {total}", show_alert=True)
-
-    elif data == "admin_bot_toggle" and is_admin(user_id):
-        current = get_setting('bot_status')
-        new_val = "OFF" if current == "ON" else "ON"
-        update_setting('bot_status', new_val)
-        bot.answer_callback_query(call.id, f"Bot Status is now {new_val}!", show_alert=True)
-
-    elif data == "admin_manage" and user_id == OWNER_ID:
-        admins = run_query("SELECT user_id FROM admins", fetch='all')
-        admin_list = "\n".join([str(a[0]) for a in admins])
+    # Admin Panel Menus
+    elif data == "admin_map_menu" and is_admin(user_id):
         markup = InlineKeyboardMarkup()
-        markup.row(InlineKeyboardButton("➕ Add Admin", callback_data="add_admin"))
-        markup.row(InlineKeyboardButton("➖ Remove Admin", callback_data="remove_admin"))
-        markup.row(InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_back"))
-        bot.edit_message_text(f"👥 <b>MANAGE ADMINS</b>\n\nCurrent Admins:\n<code>{admin_list}</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
+        markup.row(InlineKeyboardButton("➕ Add Single Task", callback_data="map_add_single"))
+        markup.row(InlineKeyboardButton("📚 Bulk Compile Tasks", callback_data="map_add_bulk"))
+        markup.row(InlineKeyboardButton("📦 View Current Stock", callback_data="map_view_stock"))
+        markup.row(InlineKeyboardButton("🛠️ Edit/Delete Task", callback_data="map_manage_task"))
+        markup.row(InlineKeyboardButton("📝 Edit Global Rules", callback_data="map_edit_rules"))
+        markup.row(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        avail = run_query("SELECT count(id) FROM map_tasks WHERE status='AVAILABLE'", fetch='one')[0]
+        bot.edit_message_text(f"🗺️ <b>MAP TASK DIRECTORY</b>\n━━━━━━━━━━━━━━━━━━━\nAssets in Circulation: <b>{avail}</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
 
-    elif data == "add_admin" and user_id == OWNER_ID:
-        user_states[user_id] = {'state': 'admin_add_id'}
-        bot.send_message(user_id, "📝 Jisko Admin banana hai, uska numeric **Telegram User ID** bhejein:")
+    elif data == "map_add_single" and is_admin(user_id):
+        user_states[user_id] = {'state': 'admin_map_add_single'}
+        bot.send_message(user_id, "📝 Execute parameter injection:\n<code>Link | Review Text</code>\n<i>(Strict parameter separation via '|' is mandatory)</i>", parse_mode="HTML")
 
-    elif data == "remove_admin" and user_id == OWNER_ID:
-        user_states[user_id] = {'state': 'admin_remove_id'}
-        bot.send_message(user_id, "📝 Jiska Admin access hatana hai, uska numeric **Telegram User ID** bhejein:")
+    elif data == "map_add_bulk" and is_admin(user_id):
+        user_states[user_id] = {'state': 'admin_map_add_bulk'}
+        bot.send_message(user_id, "📚 Execute bulk parameter injection (one per line):\n<code>Link1 | Review1</code>\n<code>Link2 | Review2</code>", parse_mode="HTML")
+
+    elif data == "map_edit_rules" and is_admin(user_id):
+        user_states[user_id] = {'state': 'admin_set_map_rules'}
+        bot.send_message(user_id, "📝 Awaiting transmission of new administrative Map Task directives:")
+
+    elif data == "admin_reward_menu" and is_admin(user_id):
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton(f"Gmail (₹{get_setting('reward_gmail')})", callback_data="setrw_reward_gmail"))
+        markup.row(InlineKeyboardButton(f"Old Gmail (₹{get_setting('reward_oldgmail')})", callback_data="setrw_reward_oldgmail"))
+        markup.row(InlineKeyboardButton(f"Map Review (₹{get_setting('reward_map')})", callback_data="setrw_reward_map"))
+        markup.row(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        bot.edit_message_text("💰 <b>REMUNERATION CONFIGURATION</b>\nSelect parameters to overwrite:", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
+
+    elif data.startswith("setrw_") and is_admin(user_id):
+        key = data.split("setrw_")[1]
+        user_states[user_id] = {'state': f'admin_set_{key}'}
+        bot.send_message(user_id, "📝 Designate new numeric threshold (₹):")
 
     elif data == "admin_toggles" and is_admin(user_id):
         markup = InlineKeyboardMarkup()
-        g_status = "🟢 ON" if get_setting('gmail_task') == 'ON' else "🔴 OFF"
-        og_status = "🟢 ON" if get_setting('old_gmail_task') == 'ON' else "🔴 OFF"
-        w_status = "🟢 ON" if get_setting('withdraw') == 'ON' else "🔴 OFF"
-        
-        markup.row(InlineKeyboardButton(f"Gmail Task: {g_status}", callback_data="toggle_gmail"))
-        markup.row(InlineKeyboardButton(f"Old Gmail Task: {og_status}", callback_data="toggle_oldgmail"))
-        markup.row(InlineKeyboardButton(f"Withdrawals: {w_status}", callback_data="toggle_withdraw"))
-        markup.row(InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_back"))
-        bot.edit_message_text("🎛️ *TOGGLE OPTIONS*\nKisi bhi option ko on/off karne ke liye click karein:", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        markup.row(InlineKeyboardButton(f"Gmail: {'🟢' if get_setting('gmail_task')=='ON' else '🔴'}", callback_data="toggle_gmail_task"))
+        markup.row(InlineKeyboardButton(f"Old Gmail: {'🟢' if get_setting('old_gmail_task')=='ON' else '🔴'}", callback_data="toggle_old_gmail_task"))
+        markup.row(InlineKeyboardButton(f"Map Task: {'🟢' if get_setting('map_review_task')=='ON' else '🔴'}", callback_data="toggle_map_review_task"))
+        markup.row(InlineKeyboardButton(f"Withdrawals: {'🟢' if get_setting('withdraw')=='ON' else '🔴'}", callback_data="toggle_withdraw"))
+        markup.row(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        bot.edit_message_text("🎛️ <b>SYSTEM ACCESS SWITCHES</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
 
     elif data.startswith("toggle_") and is_admin(user_id):
-        key_map = {"toggle_gmail": "gmail_task", "toggle_oldgmail": "old_gmail_task", "toggle_withdraw": "withdraw"}
-        setting_key = key_map.get(data)
-        if setting_key:
-            current = get_setting(setting_key)
-            new_val = "OFF" if current == "ON" else "ON"
-            update_setting(setting_key, new_val)
-            
-            markup = InlineKeyboardMarkup()
-            g_status = "🟢 ON" if get_setting('gmail_task') == 'ON' else "🔴 OFF"
-            og_status = "🟢 ON" if get_setting('old_gmail_task') == 'ON' else "🔴 OFF"
-            w_status = "🟢 ON" if get_setting('withdraw') == 'ON' else "🔴 OFF"
-            
-            markup.row(InlineKeyboardButton(f"Gmail Task: {g_status}", callback_data="toggle_gmail"))
-            markup.row(InlineKeyboardButton(f"Old Gmail Task: {og_status}", callback_data="toggle_oldgmail"))
-            markup.row(InlineKeyboardButton(f"Withdrawals: {w_status}", callback_data="toggle_withdraw"))
-            markup.row(InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_back"))
-            bot.edit_message_text("🎛️ *TOGGLE OPTIONS*\nUpdated successfully:", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        key = data.replace("toggle_", "")
+        current = get_setting(key)
+        update_setting(key, "OFF" if current == "ON" else "ON")
+        bot.answer_callback_query(call.id, f"State transitioned for {key}", show_alert=True)
+
+    elif data == "admin_bot_toggle" and is_admin(user_id):
+        current = get_setting('bot_status')
+        new_stat = "OFF" if current == "ON" else "ON"
+        update_setting('bot_status', new_stat)
+        bot.answer_callback_query(call.id, f"Global Bot Status: {new_stat}", show_alert=True)
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=admin_markup(user_id))
+
+    elif data == "admin_back" and is_admin(user_id):
+        bot.edit_message_text("🛠️ <b>EXECUTIVE DASHBOARD</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=admin_markup(user_id))
 
     elif data == "admin_set_min" and is_admin(user_id):
         markup = InlineKeyboardMarkup()
-        markup.row(InlineKeyboardButton("Set Min UPI (₹)", callback_data="set_min_upi"))
-        markup.row(InlineKeyboardButton("Set Min USDT ($)", callback_data="set_min_usdt"))
-        markup.row(InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_back"))
-        bot.edit_message_text(f"⚙️ *SET MINIMUM WITHDRAWAL*\nCurrent Min UPI: ₹{get_setting('min_upi')}\nCurrent Min USDT: ${get_setting('min_usdt')}", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
-
+        markup.row(InlineKeyboardButton("Set Threshold UPI (₹)", callback_data="set_min_upi"), InlineKeyboardButton("Set Threshold USDT ($)", callback_data="set_min_usdt"))
+        markup.row(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        bot.edit_message_text("⚙️ <b>WITHDRAWAL RESTRICTIONS</b>", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=markup)
+    
     elif data == "set_min_upi" and is_admin(user_id):
-        user_states[user_id] = {'state': 'admin_set_min_upi'}
-        bot.send_message(user_id, "📝 Naya Minimum UPI amount (in ₹) type karke bhejein:")
-
+        user_states[user_id] = {'state': 'admin_set_min_upi'}; bot.send_message(user_id, "📝 Transmit UPI Floor (₹):")
     elif data == "set_min_usdt" and is_admin(user_id):
-        user_states[user_id] = {'state': 'admin_set_min_usdt'}
-        bot.send_message(user_id, "📝 Naya Minimum USDT amount (in $) type karke bhejein:")
-
+        user_states[user_id] = {'state': 'admin_set_min_usdt'}; bot.send_message(user_id, "📝 Transmit USDT Floor ($):")
     elif data == "admin_set_pass" and is_admin(user_id):
-        user_states[user_id] = {'state': 'admin_set_gmail_pass'}
-        bot.send_message(user_id, f"🔑 Naya Gmail Task Password type karke bhejein (Current: <code>{get_setting('gmail_password')}</code>):", parse_mode="HTML")
+        user_states[user_id] = {'state': 'admin_set_gmail_pass'}; bot.send_message(user_id, "🔑 Deploy New Gmail Crypt-Key:")
 
+    elif data == "admin_total_users" and is_admin(user_id):
+        bot.answer_callback_query(call.id, f"Global Population: {len(get_all_users())}", show_alert=True)
+        
+    # 👉 CHUNKING MECHANISM FOR ALL USER BALANCES (NO LIMIT, NO CRASH)
+    elif data == "admin_user_balances" and is_admin(user_id):
+        records = run_query("SELECT user_id, username, balance FROM users ORDER BY balance DESC", fetch='all')
+        if not records:
+            bot.answer_callback_query(call.id, "No users registered yet!", show_alert=True)
+            return
+        
+        bot.answer_callback_query(call.id, "Fetching all users data...")
+        
+        header = f"👥 <b>ALL USER BALANCES (Total: {len(records)})</b>\n━━━━━━━━━━━━━━━━━━━\n"
+        current_msg = header
+        
+        for r in records:
+            uname = r[1] if r[1] else "Unknown"
+            line = f"👤 {uname} | <code>{r[0]}</code> | 💰 ₹{r[2]:.2f}\n"
+            
+            # Message split logic if exceeding Telegram max char limit (~4000)
+            if len(current_msg) + len(line) > 3900:
+                bot.send_message(call.message.chat.id, current_msg, parse_mode="HTML")
+                current_msg = "👥 <b>ALL USER BALANCES (Contd.)</b>\n━━━━━━━━━━━━━━━━━━━\n" + line
+            else:
+                current_msg += line
+                
+        if current_msg:
+            markup = InlineKeyboardMarkup()
+            markup.add(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+            bot.send_message(call.message.chat.id, current_msg, parse_mode="HTML", reply_markup=markup)
+    
     elif data == "admin_approved_list" and is_admin(user_id):
         records = run_query("SELECT user_id, method, address, amount, date FROM approved_withdraws ORDER BY id DESC LIMIT 15", fetch='all')
         if not records:
@@ -617,123 +698,104 @@ def callback_query(call):
         else:
             msg = "📜 <b>APPROVED WITHDRAWALS HISTORY:</b>\n\n"
             for r in records:
-                msg += f"👤 <code>{r[0]}</code> | {r[1]} | 💰 {r[3]} | 📌 <code>{r[2]}</code>\n📅 {r[4]}\n\n"
-            bot.send_message(user_id, msg, parse_mode="HTML")
-
-    elif data == "admin_back" and is_admin(user_id):
-        markup = InlineKeyboardMarkup()
-        markup.row(InlineKeyboardButton("🤖 Bot ON/OFF", callback_data="admin_bot_toggle"))
-        if user_id == OWNER_ID:
-            markup.row(InlineKeyboardButton("👥 Manage Admins", callback_data="admin_manage"))
-        markup.row(InlineKeyboardButton("📊 Total Users", callback_data="admin_total_users"))
-        markup.row(InlineKeyboardButton("🟢/🔴 Toggle Options", callback_data="admin_toggles"))
-        markup.row(InlineKeyboardButton("⚙️ Set Min Withdraw", callback_data="admin_set_min"))
-        markup.row(InlineKeyboardButton("🔑 Change Gmail Pass", callback_data="admin_set_pass"))
-        markup.row(InlineKeyboardButton("📜 Approved Withdrawals", callback_data="admin_approved_list"))
-        markup.row(InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"))
-        markup.row(InlineKeyboardButton("💸 Add Balance to User", callback_data="admin_addbal"))
-        markup.row(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-        bot.edit_message_text("🛠️ *ADMIN PANEL*\nKripya option select karein:", call.message.chat.id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+                curr_symbol = "₹" if r[1] == "🏦 UPI" else "$"
+                safe_addr = str(r[2]).replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
+                msg += f"👤 <code>{r[0]}</code> | {r[1]} | 💰 {curr_symbol}{r[3]} | 📌 <code>{safe_addr}</code>\n📅 {r[4]}\n\n"
+            
+            if len(msg) > 4000:
+                msg = msg[:4000] + "\n\n⚠️ (Limit reached, Showing latest)"
+                
+            try:
+                bot.send_message(user_id, msg, parse_mode="HTML")
+                bot.answer_callback_query(call.id)
+            except Exception as e:
+                bot.answer_callback_query(call.id, "⚠️ History dikhane me error aaya.", show_alert=True)
 
     elif data == "admin_broadcast" and is_admin(user_id):
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-        bot.send_message(user_id, "📢 *Broadcast Mode*\n\nJo message sabko bhejna hai, wo bhejein (Text, Photo, Video etc):", parse_mode="Markdown", reply_markup=markup)
+        markup.add(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        bot.send_message(user_id, "📢 <b>BROADCAST MODE</b>\n\nJo message sabko bhejna hai, wo bhejein (Text, Photo, Video etc):", parse_mode="HTML", reply_markup=markup)
         user_states[user_id] = {'state': 'admin_wait_broadcast'}
 
     elif data == "admin_addbal" and is_admin(user_id):
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 Back to Main", callback_data="back_to_main"))
-        bot.send_message(user_id, "💸 *Add Balance Mode*\n\n👉 User ka *Telegram ID* bhejein:", parse_mode="Markdown", reply_markup=markup)
+        markup.add(InlineKeyboardButton("🔙 Back to Dashboard", callback_data="admin_back"))
+        bot.send_message(user_id, "💸 <b>ADD BALANCE MODE</b>\n\n👉 User ka <b>Telegram ID</b> bhejein:", parse_mode="HTML", reply_markup=markup)
         user_states[user_id] = {'state': 'admin_wait_uid'}
 
+    # Approvals with Dynamic Amounts
     elif data.startswith("oldappr_") and is_admin(user_id):
-        target_user = int(data.split("_")[1])
-        bot.answer_callback_query(call.id, "Processing...")
-        add_balance(target_user, 15.0, "Old Gmail Task Approved")
-        try:
-            bot.send_message(target_user, "🎉 *Old Gmail Approved!*\n₹15 aapke Wallet me add kar diye gaye hain.", parse_mode="Markdown")
+        tgt = int(data.split("_")[1])
+        rw = float(get_setting('reward_oldgmail'))
+        add_balance(tgt, rw, "Old Gmail Task Approved")
+        try: bot.edit_message_caption(f"✅ Granted (₹{rw}) for {tgt}", call.message.chat.id, call.message.message_id)
+        except: bot.edit_message_text(f"✅ Granted (₹{rw}) for {tgt}", call.message.chat.id, call.message.message_id)
+        try: bot.send_message(tgt, f"🎉 <b>Validation Complete!</b>\n₹{rw} added for Old Gmail Task.", parse_mode="HTML")
         except: pass
-        try:
-            bot.edit_message_caption(f"✅ Old Gmail Approved for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=None)
-        except:
-            bot.edit_message_text(f"✅ Old Gmail Approved for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
-    elif data.startswith("oldrej_") and is_admin(user_id):
-        target_user = int(data.split("_")[1])
-        bot.answer_callback_query(call.id, "Processing...")
-        try:
-            bot.send_message(target_user, "❌ *Old Gmail Rejected!*\nAapka Old Gmail task reject kar diya gaya hai.", parse_mode="Markdown")
+    elif data.startswith("apprt_") and is_admin(user_id):
+        tgt = int(data.split("_")[1])
+        rw = float(get_setting('reward_gmail'))
+        add_balance(tgt, rw, "Gmail Task Approved")
+        try: bot.edit_message_caption(f"✅ Granted (₹{rw}) for {tgt}", call.message.chat.id, call.message.message_id)
+        except: bot.edit_message_text(f"✅ Granted (₹{rw}) for {tgt}", call.message.chat.id, call.message.message_id)
+        try: bot.send_message(tgt, f"🎉 <b>Validation Complete!</b>\n₹{rw} added for new Gmail Task.", parse_mode="HTML")
         except: pass
-        try:
-            bot.edit_message_caption(f"❌ Old Gmail Rejected for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=None)
-        except:
-            bot.edit_message_text(f"❌ Old Gmail Rejected for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
 
-    elif data.startswith("apprt_") and is_admin(user_id): 
-        target_user = int(data.split("_")[1])
-        bot.answer_callback_query(call.id, "Processing...")
-        add_balance(target_user, 15.0, "Gmail Task Approved")
-        try:
-            bot.send_message(target_user, "🎉 *Task Approved!*\n₹15 aapke Wallet me add kar diye gaye hain.", parse_mode="Markdown")
-        except: pass
-        try:
-            bot.edit_message_caption(f"✅ Task Approved for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=None)
-        except:
-            bot.edit_message_text(f"✅ Task Approved for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+    elif data.startswith("oldrej_") or data.startswith("rejct_"):
+        if is_admin(user_id):
+            tgt = int(data.split("_")[1])
+            try: bot.edit_message_caption(f"❌ Denied for {tgt}", call.message.chat.id, call.message.message_id)
+            except: bot.edit_message_text(f"❌ Denied for {tgt}", call.message.chat.id, call.message.message_id)
+            try: bot.send_message(tgt, "❌ <b>Submission Denied.</b> Task protocols were not followed properly.", parse_mode="HTML")
+            except: pass
 
-    elif data.startswith("rejct_") and is_admin(user_id): 
-        target_user = int(data.split("_")[1])
-        bot.answer_callback_query(call.id, "Processing...")
-        try:
-            bot.send_message(target_user, "❌ *Task Rejected!*\nAapka Gmail Task reject kar diya gaya hai.", parse_mode="Markdown")
-        except: pass
-        try:
-            bot.edit_message_caption(f"❌ Task Rejected for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML", reply_markup=None)
-        except:
-            bot.edit_message_text(f"❌ Task Rejected for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
-
+    # Withdraw Handling
     elif data.startswith("apprw_") and is_admin(user_id): 
-        pending_id = int(data.split("_")[1])
-        req = run_query("SELECT user_id, amount, method, address FROM pending_withdraws WHERE id=%s", (pending_id,), fetch='one')
+        pid = int(data.split("_")[1])
+        req = run_query("SELECT user_id, amount, method, address FROM pending_withdraws WHERE id=%s", (pid,), fetch='one')
         if req:
-            target_user, display_amount, method, address = req
-            curr_symbol = "₹" if method == "🏦 UPI" else "$"
-            bot.answer_callback_query(call.id, "Processing...")
+            t_user, amt, meth, addr = req
             
             date_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-            run_query("INSERT INTO approved_withdraws (user_id, method, address, amount, date) VALUES (%s, %s, %s, %s, %s)", 
-                      (target_user, method, address, f"{curr_symbol}{display_amount}", date_now), commit=True)
-
+            insert_check = run_query("INSERT INTO approved_withdraws (user_id, method, address, amount, date) VALUES (%s, %s, %s, %s, %s) RETURNING id", 
+                                     (int(t_user), str(meth), str(addr), float(amt), str(date_now)), fetch='id', commit=True)
+            
+            if not insert_check:
+                bot.answer_callback_query(call.id, "⚠️ Database Error! Halt operation.", show_alert=True)
+                return
+                
+            bot.answer_callback_query(call.id, "Routing Asset...")
+            curr_symbol = "₹" if meth == "🏦 UPI" else "$"
             try:
-                bot.send_message(target_user, f"🎉 *Payment Sent!*\nAapka {method} withdrawal of {curr_symbol}{display_amount} successful ho gaya hai!", parse_mode="Markdown")
+                bot.send_message(t_user, f"🎉 <b>FUNDS DISBURSED!</b>\nYour request for {curr_symbol}{amt} via {meth} has been officially fulfilled.", parse_mode="HTML")
             except: pass
             try:
-                bot.edit_message_text(f"✅ Withdrawal Approved for <code>{target_user}</code> (Done)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+                bot.edit_message_text(f"✅ Asset Routed for <code>{t_user}</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
             except: pass
-            run_query("DELETE FROM pending_withdraws WHERE id=%s", (pending_id,), commit=True)
+            run_query("DELETE FROM pending_withdraws WHERE id=%s", (pid,), commit=True)
         else:
-            bot.answer_callback_query(call.id, "⚠️ Already processed or invalid request!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ Identity mismatched or request invalid.", show_alert=True)
 
     elif data.startswith("rejcc_") and is_admin(user_id): 
-        pending_id = int(data.split("_")[1])
-        req = run_query("SELECT user_id, amount, method FROM pending_withdraws WHERE id=%s", (pending_id,), fetch='one')
+        pid = int(data.split("_")[1])
+        req = run_query("SELECT user_id, amount, method FROM pending_withdraws WHERE id=%s", (pid,), fetch='one')
         if req:
-            target_user, display_amount, method = req
-            refund_inr = display_amount if method == "🏦 UPI" else display_amount * USDT_TO_INR_RATE
+            t_user, amt, meth = req
+            refund_inr = amt if meth == "🏦 UPI" else amt * USDT_TO_INR_RATE
             
-            bot.answer_callback_query(call.id, "Processing...")
-            add_balance(target_user, refund_inr, f"Refund: {method} Withdraw Rejected")
+            bot.answer_callback_query(call.id, "Refunding Asset...")
+            add_balance(t_user, refund_inr, f"Refund: {meth} Denied")
             try:
-                bot.send_message(target_user, f"❌ *Withdrawal Rejected!*\nAapka {method} withdrawal reject ho gaya hai. Balance wallet me refund ho gaya hai.", parse_mode="Markdown")
+                bot.send_message(t_user, f"❌ <b>Request Dropped.</b>\nYour payout via {meth} failed administrative clearance. Funds have been reversed to your portfolio.", parse_mode="HTML")
             except: pass
             try:
-                bot.edit_message_text(f"❌ Withdrawal Rejected for <code>{target_user}</code> (Refunded)", call.message.chat.id, call.message.message_id, parse_mode="HTML")
+                bot.edit_message_text(f"❌ Transaction Dropped (Refunded) for <code>{t_user}</code>", call.message.chat.id, call.message.message_id, parse_mode="HTML")
             except: pass
-            run_query("DELETE FROM pending_withdraws WHERE id=%s", (pending_id,), commit=True)
+            run_query("DELETE FROM pending_withdraws WHERE id=%s", (pid,), commit=True)
         else:
-            bot.answer_callback_query(call.id, "⚠️ Already processed or invalid request!", show_alert=True)
+            bot.answer_callback_query(call.id, "⚠️ Identity mismatched or request invalid.", show_alert=True)
 
 # --- START BOT ---
-print("Bot running with new Token, DB and Fixed Flow...")
+print("System Online: All Users Balance Feature Activated Safely.")
 bot.polling(none_stop=True)
